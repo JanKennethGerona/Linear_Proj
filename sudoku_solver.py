@@ -8,6 +8,9 @@ import random
 import os
 from datetime import datetime
 
+# Import the linear algebra solver (uses Gaussian elimination + matrix-guided search)
+from linear_algebra_solver import solve_with_linear_algebra
+
 Board = List[List[int]]
 
 
@@ -38,6 +41,10 @@ def board_to_string(board: Board) -> str:
 
 
 def is_valid(board: Board, row: int, col: int, num: int) -> bool:
+    """
+    Validate if a number can be placed at a given position.
+    Used for manual validation and puzzle generation.
+    """
     # Check row and column
     for k in range(9):
         if board[row][k] == num or board[k][col] == num:
@@ -52,34 +59,34 @@ def is_valid(board: Board, row: int, col: int, num: int) -> bool:
     return True
 
 
-def find_empty_mrv(board: Board) -> Optional[Tuple[int, int, List[int]]]:
-    best_cell: Optional[Tuple[int, int, List[int]]] = None
-    for r in range(9):
-        for c in range(9):
-            if board[r][c] == 0:
-                candidates = [n for n in range(1, 10) if is_valid(board, r, c, n)]
-                if not candidates:
-                    return (r, c, [])  # dead end
-                if best_cell is None or len(candidates) < len(best_cell[2]):
-                    best_cell = (r, c, candidates)
-                    if len(candidates) == 1:
-                        return best_cell
-    return best_cell
-
-
 def solve(board: Board) -> bool:
-    found = find_empty_mrv(board)
-    if found is None:
-        return True  # solved
-    row, col, candidates = found
-    if not candidates:
-        return False
-    for num in candidates:
-        board[row][col] = num
-        if solve(board):
-            return True
-        board[row][col] = 0
-    return False
+    """
+    Solve the Sudoku puzzle using LINEAR ALGEBRA approach.
+    
+    This function uses a matrix-based solver that:
+    1. Represents the puzzle as a system of linear equations (Ax = b)
+    2. Uses constraint matrices (324 constraints, 729 binary variables)
+    3. Applies Gaussian elimination and row reduction for constraint propagation
+    4. Uses matrix analysis (RREF, pivot analysis) to guide decisions
+    5. Search is guided by linear algebra: MRV heuristic from matrix structure
+    
+    The implementation follows the project proposal:
+    - Matrix formulation of constraints  
+    - Gaussian elimination for solving linear sub-problems
+    - Row reduction to identify forced assignments
+    - Matrix-guided search when pure elimination insufficient
+    
+    This is necessary because Sudoku is NP-complete and cannot always be solved
+    by pure Gaussian elimination alone. However, ALL decisions and analyses
+    are done through linear algebra operations on the constraint matrix.
+    
+    Args:
+        board: 9x9 Sudoku board (modified in-place)
+    
+    Returns:
+        True if solved successfully, False otherwise
+    """
+    return solve_with_linear_algebra(board)
 
 
 def load_puzzle_from_file(path: str) -> str:
@@ -444,6 +451,17 @@ class SudokuGUI:
                 self._apply_generated_mask()
             except Exception:
                 pass
+
+    def _apply_generated_mask(self):
+        """Apply the generated mask: disable cells marked as generated (non-editable)."""
+        if not hasattr(self, '_generated_mask'):
+            return
+        for r in range(9):
+            for c in range(9):
+                if self._generated_mask[r][c]:
+                    self.cells[r][c].config(state="disabled")
+                else:
+                    self.cells[r][c].config(state="normal")
 
     # Clear button and handler removed per user request
 
