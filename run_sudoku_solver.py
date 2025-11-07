@@ -3,7 +3,7 @@ import argparse
 import sys
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import random
 import os
 from datetime import datetime
@@ -227,7 +227,7 @@ class SudokuGUI:
         # store mask of which cells were filled before a solve (True = user/sample filled)
         self._pre_solve_filled: Optional[List[List[bool]]] = None
         self._filled_fg = "black"
-        self._solver_fg = "blue"
+        self._solver_fg = "#65B1FC"
 
         # Instruction label so user knows they can input manually
         instr = tk.Label(self.root, text="Click a cell and type 1-9. Press Solve to solve.", fg="black")
@@ -283,26 +283,66 @@ class SudokuGUI:
                 self.cells[r][c] = e
 
     def _build_controls(self):
-        ctrl = tk.Frame(self.root, pady=8)
-        ctrl.pack()
-        solve_btn = tk.Button(ctrl, text="Solve", width=12, command=self.on_solve)
+        # Two-row button layout: top row = Solve, Generate, Save; bottom row = Clear, Blank
+        top_ctrl = tk.Frame(self.root, pady=4)
+        top_ctrl.pack()
+        blank_btn = tk.Button(top_ctrl, text="Blank", width=12, command=self.on_blank)
+        blank_btn.grid(row=0, column=0, padx=8)
+        load_btn = tk.Button(top_ctrl, text="Generate", width=12, command=self.on_load_sample)
+        load_btn.grid(row=0, column=1, padx=4)
+        load_saved_btn = tk.Button(top_ctrl, text="Load", width=12, command=self.on_load_saved)
+        load_saved_btn.grid(row=0, column=3, padx=4)
+        
+
+        bottom_ctrl = tk.Frame(self.root, pady=4)
+        bottom_ctrl.pack()
+        # Blank button only (Clear removed per user request)
+        # Use the same blue as solver-filled cells for the Solve button background
+        # and a very light green for the Save button to make them distinct but subtle.
+        solve_btn = tk.Button(
+            bottom_ctrl,
+            text="Solve",
+            width=12,
+            command=self.on_solve,
+            bg=self._solver_fg,
+            fg="black",
+            activebackground="#8EC4FA",
+        )
         solve_btn.grid(row=0, column=0, padx=4)
-        clear_btn = tk.Button(ctrl, text="Clear", width=12, command=self.on_clear)
-        clear_btn.grid(row=0, column=1, padx=4)
-        load_btn = tk.Button(ctrl, text="Generate", width=12, command=self.on_load_sample)
-        load_btn.grid(row=0, column=2, padx=4)
-        save_btn = tk.Button(ctrl, text="Save", width=12, command=self.on_save)
-        save_btn.grid(row=0, column=3, padx=4)
+        save_btn = tk.Button(
+            bottom_ctrl,
+            text="Save",
+            width=12,
+            command=self.on_save,
+            bg="#E6FFE6",
+            fg="black",
+            activebackground="#CFFFD0",
+        )
+        save_btn.grid(row=0, column=2, padx=4)
+        
+
         self.status = tk.Label(self.root, text="", fg="blue")
         self.status.pack()
 
         self.solve_btn = solve_btn
-        self.clear_btn = clear_btn
         self.load_btn = load_btn
         self.save_btn = save_btn
+        self.load_saved_btn = load_saved_btn
+        self.blank_btn = blank_btn
 
     def _on_key(self, event):
         # allow digits 1-9, BackSpace, Delete, Tab, Left/Right arrows, Return
+        # Prevent typing into generated cells even if their state was not properly set
+        try:
+            widget = event.widget
+            for r in range(9):
+                for c in range(9):
+                    if self.cells[r][c] is widget:
+                        if self._generated_mask[r][c]:
+                            return "break"
+                        break
+        except Exception:
+            pass
         if event.keysym in ("BackSpace", "Delete", "Tab", "Left", "Right", "Up", "Down", "Return"):
             return
         if event.char and event.char in "123456789":
@@ -314,6 +354,15 @@ class SudokuGUI:
         return "break"
 
     def _truncate_entry(self, widget):
+        try:
+            # If this widget is a generated cell, prevent any changes
+            for r in range(9):
+                for c in range(9):
+                    if self.cells[r][c] is widget and self._generated_mask[r][c]:
+                        widget.delete(0, tk.END)
+                        return
+        except Exception:
+            pass
         v = widget.get()
         if len(v) > 1:
             widget.delete(0, tk.END)
@@ -345,6 +394,11 @@ class SudokuGUI:
                 else:
                     ent.delete(0, tk.END)
                     ent.insert(0, str(val))
+        # enforce generated mask after populating entries so generated cells remain non-editable
+        try:
+            self._apply_generated_mask()
+        except Exception:
+            pass
 
     def set_board_with_highlight(self, board: Board, prefilled_mask: List[List[bool]]):
         """
@@ -367,21 +421,31 @@ class SudokuGUI:
     def set_widgets_state(self, state: str):
         for r in range(9):
             for c in range(9):
-                self.cells[r][c].config(state=state)
+                try:
+                    self.cells[r][c].config(state=state)
+                except Exception:
+                    pass
         self.solve_btn.config(state=state)
-        self.clear_btn.config(state=state)
         self.load_btn.config(state=state)
         # allow Save when widgets are enabled; when disabling UI keep Save disabled too
         self.save_btn.config(state=state)
+        try:
+            self.load_saved_btn.config(state=state)
+        except Exception:
+            pass
+        try:
+            self.blank_btn.config(state=state)
+        except Exception:
+            pass
 
-    def on_clear(self):
-        for r in range(9):
-            for c in range(9):
-                ent = self.cells[r][c]
-                ent.config(state="normal", fg=self._filled_fg)
-                ent.delete(0, tk.END)
-        self.status.config(text="Cleared")
-        self._pre_solve_filled = None
+        # If re-enabling widgets, re-apply generated mask so generated cells stay non-editable
+        if state == "normal":
+            try:
+                self._apply_generated_mask()
+            except Exception:
+                pass
+
+    # Clear button and handler removed per user request
 
     def on_save(self):
         """Save current board to Saved/solved or Saved/unsolved depending on whether it's solved."""
@@ -429,12 +493,56 @@ class SudokuGUI:
         board = parse_puzzle(sample)
         board = randomize_puzzle(board)
         self.set_board_to_entries(board)
-        # ensure sample cells are shown as prefilled (black)
-        for r in range(9):
-            for c in range(9):
-                if board[r][c] != 0:
-                    self.cells[r][c].config(fg=self._filled_fg)
-        self.status.config(text="Random sample loaded")
+        # mark generated cells and make them non-editable; blanks remain editable
+        self._generated_mask = [[board[r][c] != 0 for c in range(9)] for r in range(9)]
+        self._apply_generated_mask()
+        self.status.config(text="Random puzzle generated")
+
+    def on_load_saved(self):
+        """Open a file dialog to choose a puzzle from Saved/unsolved and load it into the grid."""
+        try:
+            script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        except Exception:
+            script_dir = os.getcwd()
+
+        unsolved_dir = os.path.join(script_dir, "Saved", "unsolved")
+        try:
+            os.makedirs(unsolved_dir, exist_ok=True)
+        except Exception:
+            pass
+
+        path = filedialog.askopenfilename(
+            initialdir=unsolved_dir,
+            title="Select unsolved puzzle",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        try:
+            puzzle_input = load_puzzle_from_file(path)
+            board = parse_puzzle(puzzle_input)
+        except Exception as e:
+            messagebox.showerror("Load failed", f"Failed to load puzzle: {e}")
+            return
+
+        # Load board and mark non-empty cells as generated (non-editable)
+        self.set_board_to_entries(board)
+        self._generated_mask = [[board[r][c] != 0 for c in range(9)] for r in range(9)]
+        self._apply_generated_mask()
+        try:
+            rel = os.path.relpath(path, script_dir)
+        except Exception:
+            rel = path
+        self.status.config(text=f"Loaded {rel}")
+
+    def on_blank(self):
+        # create an empty board and clear generated mask so everything is editable
+        board = [[0 for _ in range(9)] for _ in range(9)]
+        self._generated_mask = [[False for _ in range(9)] for _ in range(9)]
+        self.set_board_to_entries(board)
+        self._apply_generated_mask()
+        self.status.config(text="Blank board created")
 
     def on_solve(self):
         try:

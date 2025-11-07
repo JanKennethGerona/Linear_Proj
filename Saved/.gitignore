@@ -1,0 +1,3 @@
+# Ignore all saved puzzles (keep this .gitignore file tracked)
+*
+!.gitignore
