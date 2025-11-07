@@ -18,10 +18,10 @@ This project implements a Sudoku solver using linear algebra principles as speci
 **Our linear algebra approach** models Sudoku as:
 - **729 binary variables**: x[r,c,n] ∈ {0,1} where x[r,c,n]=1 means cell (r,c) contains number n
 - **324 linear constraints**: representing row, column, cell, and box requirements
-- **Exact cover matrix**: A binary matrix encoding all constraints
-- **Matrix operations**: using NumPy for efficient computation
+- **Sparse exact cover matrix**: Using `scipy.sparse` for efficient storage (only 1.24% non-zero)
+- **Matrix operations**: using NumPy and SciPy for efficient computation
 - **Gaussian elimination**: for constraint propagation and determining forced assignments
-- **Matrix analysis**: Using RREF and pivot analysis to guide decisions
+- **Matrix analysis**: Using sparse matrix operations to guide decisions
 
 **Key Difference**: While traditional backtracking uses simple if-statements to check constraints, our approach formulates the entire problem as a linear system and uses matrix operations (Gaussian elimination, row reduction, constraint matrix analysis) to both propagate constraints and guide the search process.
 
@@ -61,12 +61,18 @@ The Sudoku puzzle becomes: **Find binary vector x such that Ax = b**
 ## 🚀 Features
 
 ### Linear Algebra Solver (`linear_algebra_solver.py`)
-- ✅ **Matrix-based constraint representation**
+- ✅ **Sparse matrix-based constraint representation** using `scipy.sparse`
 - ✅ **Binary variable encoding** (729 variables)
 - ✅ **Exact cover problem** formulation
-- ✅ **Gaussian elimination** with backtracking for binary constraints
-- ✅ **Minimum Remaining Values (MRV)** heuristic for efficiency
-- ✅ **Constraint propagation** via matrix row reduction
+- ✅ **Gaussian elimination** with matrix-guided backtracking
+- ✅ **Minimum Remaining Values (MRV)** heuristic from constraint matrix
+- ✅ **Constraint propagation** via sparse matrix operations
+
+**Why scipy.sparse?**
+- The constraint matrix is **highly sparse**: only 2,916 non-zero entries out of 236,196 (1.24% density)
+- **Memory efficient**: stores only non-zero elements
+- **Faster operations**: arithmetic skips zero elements
+- **Better cache utilization**: compact storage improves performance
 
 ### GUI Application (`sudoku_solver.py`)
 - ✅ Interactive 9×9 grid for manual input
@@ -80,7 +86,8 @@ The Sudoku puzzle becomes: **Find binary vector x such that Ax = b**
 
 ### Prerequisites
 - Python 3.7+ (tested on Python 3.14)
-- NumPy (for matrix operations)
+- NumPy (for array operations)
+- SciPy (for sparse matrix operations)
 
 ### Setup
 ```powershell
@@ -89,12 +96,12 @@ git clone https://github.com/JanKennethGerona/Linear_Proj.git
 cd Linear_Proj
 
 # Install dependencies
-pip install numpy
+pip install numpy scipy
 
 # Or create a virtual environment (recommended)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install numpy
+pip install numpy scipy
 ```
 
 ## 🎮 Usage

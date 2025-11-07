@@ -2,16 +2,21 @@
 Linear Algebra-based Sudoku Solver
 
 This module implements a Sudoku solver using linear algebra concepts:
-- Matrix representation of constraints
+- Sparse matrix representation of constraints (using scipy.sparse)
 - System of linear equations (Ax = b)
 - Gaussian elimination and row reduction
 - Exact cover problem formulation
 
 Based on the approach where each Sudoku puzzle is represented as a system
 of linear equations with binary variables.
+
+Uses scipy.sparse for efficient sparse matrix operations since the constraint
+matrix is highly sparse (only 2,916 non-zero entries out of 236,196 total).
 """
 
 import numpy as np
+from scipy import sparse
+from scipy.sparse import lil_matrix, csr_matrix
 from typing import List, Tuple, Optional
 
 Board = List[List[int]]
@@ -67,9 +72,9 @@ class LinearAlgebraSudokuSolver:
         row = var_idx // 81
         return row, col, num
     
-    def build_constraint_matrix(self) -> np.ndarray:
+    def build_constraint_matrix(self) -> csr_matrix:
         """
-        Build the constraint matrix A for the exact cover problem.
+        Build the constraint matrix A for the exact cover problem using SPARSE matrix.
         
         Matrix dimensions: 324 × 729
         - Rows represent constraints
@@ -81,10 +86,15 @@ class LinearAlgebraSudokuSolver:
         - [162-242]: Column constraints (each column has each digit)
         - [243-323]: Box constraints (each 3×3 box has each digit)
         
+        Uses scipy.sparse for efficiency:
+        - Only 2,916 non-zero entries (each variable in 4 constraints)
+        - Sparsity: 1.24% (highly sparse!)
+        
         Returns:
-            Binary constraint matrix A (324 × 729)
+            Sparse binary constraint matrix A (324 × 729) in CSR format
         """
-        A = np.zeros((self.num_constraints, self.num_vars), dtype=np.int32)
+        # Use LIL (List of Lists) format for efficient construction
+        A = lil_matrix((self.num_constraints, self.num_vars), dtype=np.int32)
         
         for row in range(9):
             for col in range(9):
@@ -108,7 +118,8 @@ class LinearAlgebraSudokuSolver:
                     box_constraint_idx = 243 + box_idx * 9 + (num - 1)
                     A[box_constraint_idx, var_idx] = 1
         
-        return A
+        # Convert to CSR (Compressed Sparse Row) format for efficient arithmetic operations
+        return A.tocsr()
     
     def encode_puzzle(self, board: Board) -> np.ndarray:
         """
@@ -125,27 +136,30 @@ class LinearAlgebraSudokuSolver:
         b = np.ones(self.num_constraints, dtype=np.int32)
         return b
     
-    def apply_initial_clues(self, A: np.ndarray, b: np.ndarray, board: Board) -> Tuple[np.ndarray, np.ndarray, List[int]]:
+    def apply_initial_clues(self, A: csr_matrix, b: np.ndarray, board: Board) -> Tuple[csr_matrix, np.ndarray, List[int]]:
         """
-        Reduce the constraint matrix based on initial clues.
+        Reduce the SPARSE constraint matrix based on initial clues.
         
         For each given clue (row, col, num):
         1. Fix x[row,col,num] = 1
         2. Remove conflicting variables (other numbers in same cell/row/col/box)
         3. Update constraint matrix accordingly
         
+        Uses sparse matrix operations for efficiency.
+        
         Args:
-            A: Original constraint matrix
+            A: Original sparse constraint matrix (CSR format)
             b: Constraint vector
             board: Initial puzzle board
             
         Returns:
-            Tuple of (reduced_A, reduced_b, fixed_vars)
-            - reduced_A: Reduced constraint matrix
+            Tuple of (reduced_A, reduced_b, remaining_vars)
+            - reduced_A: Reduced sparse constraint matrix
             - reduced_b: Updated constraint vector
-            - fixed_vars: List of variable indices that are fixed to 1
+            - remaining_vars: List of remaining variable indices
         """
-        A_work = A.copy()
+        # Convert to LIL format for efficient row/column operations
+        A_work = A.tolil()
         b_work = b.copy()
         fixed_vars = []
         removed_constraints = set()
@@ -159,13 +173,15 @@ class LinearAlgebraSudokuSolver:
                     var_idx = self._var_index(row, col, num)
                     fixed_vars.append(var_idx)
                     
-                    # Find all constraints satisfied by this variable
-                    satisfied_constraints = np.where(A_work[:, var_idx] == 1)[0]
+                    # Find all constraints satisfied by this variable (sparse column access)
+                    col_vector = A_work[:, var_idx].toarray().flatten()
+                    satisfied_constraints = np.where(col_vector == 1)[0]
                     
                     for constraint_idx in satisfied_constraints:
                         if constraint_idx not in removed_constraints:
-                            # Find all variables that also satisfy this constraint
-                            conflicting_vars = np.where(A_work[constraint_idx, :] == 1)[0]
+                            # Find all variables that also satisfy this constraint (sparse row access)
+                            row_vector = A_work[constraint_idx, :].toarray().flatten()
+                            conflicting_vars = np.where(row_vector == 1)[0]
                             removed_vars.update(conflicting_vars.tolist())
                             removed_constraints.add(constraint_idx)
         
@@ -174,29 +190,36 @@ class LinearAlgebraSudokuSolver:
         remaining_constraints = [i for i in range(self.num_constraints) if i not in removed_constraints]
         
         if len(remaining_vars) > 0 and len(remaining_constraints) > 0:
-            A_reduced = A_work[np.ix_(remaining_constraints, remaining_vars)]
+            # Extract submatrix efficiently using sparse indexing
+            A_reduced = A_work[remaining_constraints, :][:, remaining_vars]
             b_reduced = b_work[remaining_constraints]
-            return A_reduced, b_reduced, remaining_vars
+            # Convert back to CSR for efficient arithmetic
+            return A_reduced.tocsr(), b_reduced, remaining_vars
         else:
-            # Puzzle already solved by clues
-            return np.zeros((0, 0)), np.zeros(0), remaining_vars
+            # Puzzle already solved by clues - return empty sparse matrix
+            return csr_matrix((0, 0)), np.zeros(0), remaining_vars
     
     def gaussian_elimination_with_backtracking(
         self, 
-        A: np.ndarray, 
+        A: csr_matrix, 
         b: np.ndarray, 
         var_mapping: List[int]
     ) -> Optional[np.ndarray]:
         """
-        Solve the exact cover problem using modified Gaussian elimination.
+        Solve the exact cover problem using modified Gaussian elimination with SPARSE matrices.
         
         Since Sudoku requires binary (0/1) solutions, we use a hybrid approach:
-        1. Row reduction to simplify the system
-        2. Backtracking for binary constraint satisfaction
+        1. Row reduction to simplify the system (using sparse matrix operations)
+        2. Matrix-guided backtracking for binary constraint satisfaction
         3. Forward checking to detect conflicts early
         
+        Benefits of sparse matrices:
+        - Memory efficient: stores only non-zero elements
+        - Faster arithmetic: operations skip zero elements
+        - Better cache utilization
+        
         Args:
-            A: Constraint matrix (reduced)
+            A: Sparse constraint matrix (CSR format)
             b: Constraint vector (all ones)
             var_mapping: Mapping from reduced indices to original variable indices
             
@@ -208,27 +231,27 @@ class LinearAlgebraSudokuSolver:
             solution = np.zeros(self.num_vars, dtype=np.int32)
             return solution
         
-        # Use exact cover backtracking with constraint propagation
+        # Use exact cover backtracking with sparse constraint propagation
         return self._solve_exact_cover_backtracking(A, b, var_mapping)
     
     def _solve_exact_cover_backtracking(
         self, 
-        A: np.ndarray, 
+        A: csr_matrix, 
         b: np.ndarray, 
         var_mapping: List[int]
     ) -> Optional[np.ndarray]:
         """
-        Solve exact cover using backtracking with constraint propagation.
+        Solve exact cover using backtracking with SPARSE matrix constraint propagation.
         
-        This implements Algorithm X (similar to Dancing Links):
+        This implements Algorithm X (similar to Dancing Links) using sparse matrices:
         1. If matrix is empty, solution found
-        2. Choose a constraint (row) with minimum options (MRV heuristic)
+        2. Choose a constraint (row) with minimum options (MRV heuristic from matrix)
         3. Try each variable that satisfies this constraint
-        4. Recursively solve reduced problem
+        4. Recursively solve reduced problem using sparse matrix slicing
         5. Backtrack if no solution
         
         Args:
-            A: Current constraint matrix
+            A: Current sparse constraint matrix (CSR format)
             b: Current constraint vector
             var_mapping: Current variable to original index mapping
             
@@ -239,24 +262,26 @@ class LinearAlgebraSudokuSolver:
         
         def backtrack(A_curr, var_map_curr, partial_solution):
             # Base case: all constraints satisfied
-            if A_curr.shape[0] == 0 or np.all(np.sum(A_curr, axis=1) == 0):
+            if A_curr.shape[0] == 0:
                 return True
             
             # Find constraint with minimum remaining variables (MRV heuristic)
-            row_sums = np.sum(A_curr, axis=1)
+            # Use sparse sum along axis 1
+            row_sums = np.asarray(A_curr.sum(axis=1)).flatten()
             
             # If any constraint has no satisfying variables, backtrack
             if np.any(row_sums == 0):
                 return False
             
             # Choose constraint with fewest options
-            constraint_idx = np.argmin(row_sums[row_sums > 0])
-            # Get the actual constraint index
             valid_indices = np.where(row_sums > 0)[0]
-            constraint_idx = valid_indices[0] if len(valid_indices) > 0 else 0
+            if len(valid_indices) == 0:
+                return True  # All done
             
-            # Try each variable that satisfies this constraint
-            satisfying_vars = np.where(A_curr[constraint_idx, :] == 1)[0]
+            constraint_idx = valid_indices[np.argmin(row_sums[valid_indices])]
+            
+            # Try each variable that satisfies this constraint (sparse row access)
+            satisfying_vars = A_curr.getrow(constraint_idx).nonzero()[1]
             
             for var_local_idx in satisfying_vars:
                 var_original_idx = var_map_curr[var_local_idx]
@@ -264,13 +289,14 @@ class LinearAlgebraSudokuSolver:
                 # Set this variable to 1
                 partial_solution[var_original_idx] = 1
                 
-                # Find constraints satisfied by this variable
-                satisfied_constraints = np.where(A_curr[:, var_local_idx] == 1)[0]
+                # Find constraints satisfied by this variable (sparse column access)
+                satisfied_constraints = A_curr.getcol(var_local_idx).nonzero()[0]
                 
-                # Find conflicting variables (share constraints with chosen var)
+                # Find conflicting variables (share constraints with chosen var) using sparse operations
                 conflicting_vars_set = set()
                 for constraint in satisfied_constraints:
-                    conflicting_vars = np.where(A_curr[constraint, :] == 1)[0]
+                    # Sparse row access to get conflicting variables
+                    conflicting_vars = A_curr.getrow(constraint).nonzero()[1]
                     conflicting_vars_set.update(conflicting_vars.tolist())
                 
                 # Remove satisfied constraints and conflicting variables
@@ -282,7 +308,8 @@ class LinearAlgebraSudokuSolver:
                     return True
                 
                 if len(remaining_vars) > 0:
-                    A_next = A_curr[np.ix_(remaining_constraints, remaining_vars)]
+                    # Extract submatrix efficiently using sparse indexing
+                    A_next = A_curr[remaining_constraints, :][:, remaining_vars]
                     var_map_next = [var_map_curr[i] for i in remaining_vars]
                     
                     if backtrack(A_next, var_map_next, partial_solution):
