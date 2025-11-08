@@ -7,6 +7,7 @@ from tkinter import messagebox, filedialog
 import random
 import os
 from datetime import datetime
+import time
 
 # Import the linear algebra solver (uses Gaussian elimination + matrix-guided search)
 from linear_algebra_solver import solve_with_linear_algebra
@@ -578,7 +579,25 @@ class SudokuGUI:
         thread.start()
 
     def _worker_solve(self, board: Board):
+        # Count clues and empty cells before solving
+        num_clues = sum(1 for r in range(9) for c in range(9) if board[r][c] != 0)
+        num_empty = 81 - num_clues
+        
+        # Time the solve operation
+        start_time = time.time()
         success = solve(board)
+        elapsed_time = time.time() - start_time
+        
+        # Print statistics to terminal
+        print("\n" + "="*50)
+        print("SUDOKU SOLVE ATTEMPT")
+        print("="*50)
+        print(f"Number of clues:      {num_clues}")
+        print(f"Number of empty cells: {num_empty}")
+        print(f"Time elapsed:         {elapsed_time:.4f} seconds")
+        print(f"Status:               {'✓ SOLVED' if success else '✗ NO SOLUTION'}")
+        print("="*50 + "\n")
+        
         # schedule UI update back on main thread
         self.root.after(0, lambda: self._on_solve_finished(success, board))
 
