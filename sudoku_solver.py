@@ -228,6 +228,8 @@ class SudokuGUI:
         self.root = root
         self.root.title("Sudoku Solver")
         self.cells = [[None for _ in range(9)] for _ in range(9)]
+        # store each cell's original background so we can preserve it when disabling
+        self._cell_bg: List[List[str]] = [["white" for _ in range(9)] for _ in range(9)]
         # Use a flat background color for the main frame to better show highlights
         self.frame = tk.Frame(root, padx=10, pady=10) 
         self.frame.pack()
@@ -235,7 +237,12 @@ class SudokuGUI:
         # store mask of which cells were filled before a solve (True = user/sample filled)
         self._pre_solve_filled: Optional[List[List[bool]]] = None
         self._filled_fg = "black"
+        # Color used for solver-filled cells (text) and button accent
         self._solver_fg = "#65B1FC"
+        # Appearance for generated (initial) cells: preserve background and
+        # use a gray foreground for generated numbers to make them appear subdued.
+        self._generated_bg = "#E6F0FF"
+        self._generated_fg = "#7F7F7F"  # gray for generated numbers
 
         # Instruction label so user knows they can input manually
         instr = tk.Label(self.root, text="Click a cell and type 1-9. Press Solve to solve.", fg="black")
@@ -289,6 +296,8 @@ class SudokuGUI:
                 # select contents when focused to make replacing easy
                 e.bind("<FocusIn>", lambda ev, w=e: w.select_range(0, tk.END))
                 self.cells[r][c] = e
+                # remember the background for this cell so we can restore/preserve it
+                self._cell_bg[r][c] = box_bg_color
 
     def _build_controls(self):
         # Two-row button layout: top row = Solve, Generate, Save; bottom row = Clear, Blank
@@ -460,9 +469,28 @@ class SudokuGUI:
         for r in range(9):
             for c in range(9):
                 if self._generated_mask[r][c]:
-                    self.cells[r][c].config(state="disabled")
+                    # Keep generated cells non-editable but preserve their
+                    # existing background color. Use the stored cell bg as
+                    # the disabledbackground so appearance doesn't change,
+                    # and use a lighter disabledforeground to simulate
+                    # translucency for the numbers.
+                    try:
+                        self.cells[r][c].config(
+                            state="disabled",
+                            disabledbackground=self._cell_bg[r][c],
+                            disabledforeground=self._generated_fg,
+                        )
+                    except Exception:
+                        # Older Tk versions or some platforms may not support
+                        # disabledbackground/disabledforeground; fall back to
+                        # normal disabled state (may gray-out on some platforms).
+                        self.cells[r][c].config(state="disabled")
                 else:
-                    self.cells[r][c].config(state="normal")
+                    # Ensure normal cells have normal state and default fg
+                    try:
+                        self.cells[r][c].config(state="normal", fg=self._filled_fg, bg=self._cell_bg[r][c])
+                    except Exception:
+                        pass
 
     # Clear button and handler removed per user request
 
@@ -511,10 +539,30 @@ class SudokuGUI:
         )
         board = parse_puzzle(sample)
         board = randomize_puzzle(board)
+
+        # CLEAR previous generated mask/state so entries can be updated.
+        # If entries were disabled from a previous generated puzzle, trying to
+        # write into them will fail. Ensure all cells are enabled first.
+        self._generated_mask = [[False for _ in range(9)] for _ in range(9)]
+        try:
+            self._apply_generated_mask()
+        except Exception:
+            # If applying mask fails for any reason, ensure entries are at least writable
+            for r in range(9):
+                for c in range(9):
+                    try:
+                        self.cells[r][c].config(state="normal")
+                    except Exception:
+                        pass
+
+        # Now populate entries with the new board
         self.set_board_to_entries(board)
+
         # mark generated cells and make them non-editable; blanks remain editable
         self._generated_mask = [[board[r][c] != 0 for c in range(9)] for r in range(9)]
         self._apply_generated_mask()
+        # Reset any pre-solve mask since this is a fresh generated puzzle
+        self._pre_solve_filled = [[board[r][c] != 0 for c in range(9)] for r in range(9)]
         self.status.config(text="Random puzzle generated")
 
     def on_load_saved(self):
@@ -545,10 +593,29 @@ class SudokuGUI:
             messagebox.showerror("Load failed", f"Failed to load puzzle: {e}")
             return
 
+        # Ensure any previously generated/disabled cells are cleared so we can
+        # overwrite the grid immediately. This mirrors the behaviour in
+        # on_load_sample and on_blank so a single click always updates the UI.
+        self._generated_mask = [[False for _ in range(9)] for _ in range(9)]
+        try:
+            self._apply_generated_mask()
+        except Exception:
+            # Fallback: ensure entries are writable
+            for r in range(9):
+                for c in range(9):
+                    try:
+                        self.cells[r][c].config(state="normal")
+                    except Exception:
+                        pass
+
         # Load board and mark non-empty cells as generated (non-editable)
         self.set_board_to_entries(board)
         self._generated_mask = [[board[r][c] != 0 for c in range(9)] for r in range(9)]
         self._apply_generated_mask()
+
+        # update pre-solve mask so solver highlights behave correctly after load
+        self._pre_solve_filled = [[board[r][c] != 0 for c in range(9)] for r in range(9)]
+
         try:
             rel = os.path.relpath(path, script_dir)
         except Exception:
@@ -558,9 +625,26 @@ class SudokuGUI:
     def on_blank(self):
         # create an empty board and clear generated mask so everything is editable
         board = [[0 for _ in range(9)] for _ in range(9)]
+
+        # Clear generated mask first so entries are writable.
         self._generated_mask = [[False for _ in range(9)] for _ in range(9)]
+        # Ensure every Entry is writable before modifying them (fixes needing two clicks)
+        for r in range(9):
+            for c in range(9):
+                try:
+                    self.cells[r][c].config(state="normal")
+                except Exception:
+                    pass
+
+        # populate the blank board and reapply mask (no cells will be disabled)
         self.set_board_to_entries(board)
-        self._apply_generated_mask()
+        try:
+            self._apply_generated_mask()
+        except Exception:
+            pass
+
+        # reset pre-solve filled mask as this is a fresh blank board
+        self._pre_solve_filled = [[False for _ in range(9)] for _ in range(9)]
         self.status.config(text="Blank board created")
 
     def on_solve(self):
@@ -582,12 +666,19 @@ class SudokuGUI:
         # Count clues and empty cells before solving
         num_clues = sum(1 for r in range(9) for c in range(9) if board[r][c] != 0)
         num_empty = 81 - num_clues
-        
-        # Time the solve operation
+
+        # Time the solve operation and catch exceptions so the worker thread
+        # doesn't die silently (which makes it look like 'not working').
         start_time = time.time()
-        success = solve(board)
+        error_trace = None
+        try:
+            success = solve(board)
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            success = False
         elapsed_time = time.time() - start_time
-        
+
         # Print statistics to terminal
         print("\n" + "="*50)
         print("SUDOKU SOLVE ATTEMPT")
@@ -595,13 +686,21 @@ class SudokuGUI:
         print(f"Number of clues:      {num_clues}")
         print(f"Number of empty cells: {num_empty}")
         print(f"Time elapsed:         {elapsed_time:.4f} seconds")
-        print(f"Status:               {'✓ SOLVED' if success else '✗ NO SOLUTION'}")
+        # Use ASCII-only output to avoid UnicodeEncodeError on Windows consoles
+        print(f"Status:               {'SOLVED' if success else 'NO SOLUTION'}")
         print("="*50 + "\n")
-        
-        # schedule UI update back on main thread
-        self.root.after(0, lambda: self._on_solve_finished(success, board))
 
-    def _on_solve_finished(self, success: bool, board: Board):
+        # schedule UI update back on main thread and pass any error trace
+        self.root.after(0, lambda: self._on_solve_finished(success, board, error_trace))
+
+    def _on_solve_finished(self, success: bool, board: Board, error_trace: Optional[str] = None):
+        # If the worker encountered an exception, show it to the user
+        if error_trace is not None:
+            messagebox.showerror("Solver error", f"An error occurred while solving:\n\n{error_trace}")
+            self.status.config(text="Error during solve")
+            self.set_widgets_state("normal")
+            return
+
         if success:
             # update entries and color solver-filled cells blue
             if self._pre_solve_filled is None:
