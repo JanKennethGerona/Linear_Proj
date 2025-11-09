@@ -238,6 +238,7 @@ class SudokuGUI:
         self._pre_solve_filled: Optional[List[List[bool]]] = None
         self._filled_fg = "black"
         # Color used for solver-filled cells (text) and button accent
+        # (restore light-blue color for solver-filled numbers)
         self._solver_fg = "#65B1FC"
         # Appearance for generated (initial) cells: preserve background and
         # use a gray foreground for generated numbers to make them appear subdued.
@@ -432,7 +433,13 @@ class SudokuGUI:
                 if val != 0:
                     ent.insert(0, str(val))
                     if not prefilled_mask[r][c]:
-                        ent.config(fg=self._solver_fg)
+                        # ensure solver-filled cells use the solver color
+                        # also set disabledforeground so the color remains
+                        # correct if the widget state changes elsewhere
+                        try:
+                            ent.config(fg=self._solver_fg, disabledforeground=self._solver_fg)
+                        except Exception:
+                            ent.config(fg=self._solver_fg)
                 # leave empty cells blank (shouldn't happen after successful solve)
 
     def set_widgets_state(self, state: str):
